@@ -254,11 +254,13 @@ Three things this makes concrete:
 - **The contiguous-run signal is what makes a small `n` usable.** At n=5
   the overlap fraction flags 46% of clean text; the run length at the same
   `n` flags ~2% while catching *more* leakage than the n=13 default.
-- **Ranking quality alone will mislead you.** n=5 on overlap fraction has
-  the best AUC of any setting tested (0.882) and is simultaneously the
-  least usable, because the two score distributions overlap so heavily
-  that no threshold separates them. AUC measures ordering; FPR at your
-  actual threshold measures whether you can act on a flag.
+- **Ranking quality alone will mislead you.** Across all eight settings
+  AUC spans just 0.838–0.890, while false-positive rate spans
+  0.000–0.457. n=5 on overlap fraction sits mid-pack on AUC (0.869) and
+  is by far the least usable of the eight, because its score
+  distributions overlap so heavily that no threshold separates them. AUC
+  measures ordering and barely distinguishes these settings; FPR at your
+  actual threshold is what decides whether you can act on a flag.
 
 The defaults are deliberately **not** tuned to win on this benchmark. It's
 synthetic, and fitting the defaults to a generator I wrote myself is
