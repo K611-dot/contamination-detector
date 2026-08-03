@@ -1,5 +1,9 @@
 # contamination-detector
 
+[![tests](https://github.com/K611-dot/contamination-detector/actions/workflows/tests.yml/badge.svg)](https://github.com/K611-dot/contamination-detector/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Check whether a benchmark leaked into a model's training data — before you publish results on it.**
 
 Benchmark contamination is when eval examples end up inside a model's
