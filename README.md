@@ -3,6 +3,7 @@
 [![tests](https://github.com/K611-dot/contamination-detector/actions/workflows/tests.yml/badge.svg)](https://github.com/K611-dot/contamination-detector/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![live demo](https://img.shields.io/badge/live%20demo-streamlit-ff4b4b)](https://contamination-detector.streamlit.app/)
 
 **Check whether a benchmark leaked into a model's training data — before you publish results on it.**
 
@@ -20,8 +21,15 @@ project puts several published detection methods behind one interface.
 
 ## Try it without installing anything
 
-The web demo runs the n-gram detector in your browser — paste your eval
-examples and a corpus, get a per-example contamination score.
+### → [contamination-detector.streamlit.app](https://contamination-detector.streamlit.app/)
+
+Paste your eval examples and a corpus, get a per-example contamination
+score with the overlap fraction and longest verbatim run. Nothing to
+install, no model downloads, and pasted text is processed in memory
+only — never stored or transmitted.
+
+The hosted demo caps input size so one visitor can't exhaust the shared
+free-tier container. For full-size corpora, run it locally:
 
 ```bash
 pip install -r requirements.txt
