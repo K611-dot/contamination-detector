@@ -253,14 +253,49 @@ Three things this makes concrete:
   interesting happens on partial and paraphrased leaks.
 - **The contiguous-run signal is what makes a small `n` usable.** At n=5
   the overlap fraction flags 46% of clean text; the run length at the same
-  `n` flags ~2% while catching *more* leakage than the n=13 default.
+  `n` flags ~2%.
 - **Ranking quality alone will mislead you.** Across all eight settings
   AUC spans just 0.838–0.890, while false-positive rate spans
   0.000–0.457. n=5 on overlap fraction sits mid-pack on AUC (0.869) and
   is by far the least usable of the eight, because its score
-  distributions overlap so heavily that no threshold separates them. AUC
-  measures ordering and barely distinguishes these settings; FPR at your
-  actual threshold is what decides whether you can act on a flag.
+  distributions overlap so heavily that no threshold separates them.
+
+### FPR is the wrong denominator
+
+Even false-positive rate flatters a detector, because it divides by the
+clean set. When you sweep a corpus that is almost entirely clean, what
+matters is precision — the fraction of your *flagged* pile that is real,
+because that pile is what somebody has to read. The benchmark reports
+this directly:
+
+```bash
+python scripts/benchmark_detectors.py --prevalence 0.01
+```
+
+Sweeping 10,000 documents at 1% real contamination:
+
+| Setting | Flagged | Real | False | Missed | Precision |
+|---|---|---|---|---|---|
+| n=5, overlap | 4,616 | 94 | 4,521 | 6 | **0.020** |
+| n=5, longest run | 222 | 40 | 182 | 60 | 0.181 |
+| n=8, overlap | 70 | 37 | 33 | 63 | 0.527 |
+| n=8, longest run | 34 | 34 | 0 | 66 | **1.000** |
+| n=13, overlap | 33 | 33 | 0 | 67 | 1.000 |
+
+This reverses a conclusion an earlier version of this README drew. Judged
+on FPR, n=5 with the run signal looked like the best usable setting — 0.018
+FPR and higher recall than the n=13 default. Judged at realistic
+prevalence it finds 7 more real leaks than n=13 and pays 182 false flags
+for them. A 46% FPR isn't a noisy signal, it's a review queue nobody
+finishes.
+
+`report.precision_at_prevalence()` and `report.review_queue_size()`
+compute this for your own numbers. Quote precision at your expected base
+rate, not FPR, whenever you report deployment performance.
+
+Credit to [Giulianno Vollmer](https://www.linkedin.com/in/giuliannovollmer/)
+for pointing out that FPR understates the deployment cost, and for the two
+features in the next section.
 
 The defaults are deliberately **not** tuned to win on this benchmark. It's
 synthetic, and fitting the defaults to a generator I wrote myself is
@@ -275,6 +310,58 @@ benchmark measured nothing at all. Real prose is built from recurring
 collocations and *that* is what creates innocent n-gram matches. Text is
 now assembled from a shared phrase pool, clean examples reach 0.82 overlap
 at n=5, and a test asserts that difficulty so it can't silently regress.
+
+## Per-source scoring and calibration
+
+Two problems with treating a corpus as one undifferentiated blob.
+
+**Provenance.** A match against a training split and a match against a
+held-out test split are different findings with different remedies, and
+collapsing both into "contaminated" makes the report unactionable.
+`MultiSourceIndex` keeps them apart:
+
+```python
+from contamination_detector.ngram_overlap import MultiSourceIndex
+
+index = MultiSourceIndex({"train": train_docs, "test": test_docs}, n=13)
+result = index.overlap_score(example_text, example_id="q1")
+
+print(result.best_source)          # "test" — where the longest run sits
+print(result.matched_sources())    # every source with a verbatim run
+print(result.per_source["train"].longest_match_tokens)
+```
+
+**Calibration.** Innocent overlap is not stationary across sources.
+Templated math problems, boilerplate scrape, and licence text throw
+near-duplicate n-grams for reasons unrelated to leakage; ordinary prose
+does not. One global threshold over-flags the formulaic sources into
+uselessness and quietly under-flags the prose ones.
+
+So don't guess a constant — measure each source's own null distribution.
+Score control text you know is *outside* the source (written after the
+cutoff, or held-out data the source predates), and take a high percentile
+of those scores as that source's threshold:
+
+```python
+from contamination_detector.calibration import calibrate_sources
+
+thresholds = calibrate_sources(index, control_texts, percentile_value=99.0)
+
+for source, t in thresholds.items():
+    print(source, t.longest_run, t.is_well_estimated)
+
+result = index.overlap_score(suspect_text)
+leaked = [
+    name for name, match in result.per_source.items()
+    if match.longest_match_tokens >= thresholds[name].longest_run
+]
+```
+
+Whatever overlap innocent text produces against that particular source,
+the threshold sits above it by construction. Check `is_well_estimated` —
+a 99th percentile from ten controls is guesswork, and it will tell you so.
+This is only as good as your control set: controls from a different domain
+calibrate the wrong distribution.
 
 ## Interpreting results honestly
 

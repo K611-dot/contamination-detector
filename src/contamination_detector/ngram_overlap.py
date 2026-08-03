@@ -153,3 +153,95 @@ def batch_overlap_scores(
     """Score every example in `examples` (id -> text) against the corpus."""
     index = CorpusIndex(corpus_documents, n=n)
     return [index.overlap_score(text, example_id=eid) for eid, text in examples.items()]
+
+
+@dataclass
+class MultiSourceResult:
+    """An example scored against each source separately.
+
+    Collapsing every source into one "contaminated" verdict throws away the
+    part that determines what to do about it. A match against a training
+    split and a match against a held-out test split are different findings
+    with different remedies, and a single score cannot distinguish them.
+    """
+
+    example_id: str
+    per_source: dict[str, OverlapResult]
+
+    @property
+    def scorable(self) -> bool:
+        return any(r.scorable for r in self.per_source.values())
+
+    @property
+    def longest_match_tokens(self) -> int:
+        if not self.per_source:
+            return 0
+        return max(r.longest_match_tokens for r in self.per_source.values())
+
+    @property
+    def max_overlap_fraction(self) -> float:
+        scorable = [r.overlap_fraction for r in self.per_source.values() if r.scorable]
+        return max(scorable) if scorable else float("nan")
+
+    @property
+    def best_source(self) -> str | None:
+        """Source with the longest verbatim run — where the leak most likely is."""
+        matched = {
+            name: r for name, r in self.per_source.items() if r.longest_match_tokens > 0
+        }
+        if not matched:
+            return None
+        return max(matched, key=lambda name: matched[name].longest_match_tokens)
+
+    def matched_sources(self) -> list[str]:
+        """Every source showing a verbatim run, longest first."""
+        matched = [
+            (name, r.longest_match_tokens)
+            for name, r in self.per_source.items()
+            if r.longest_match_tokens > 0
+        ]
+        matched.sort(key=lambda pair: pair[1], reverse=True)
+        return [name for name, _ in matched]
+
+
+class MultiSourceIndex:
+    """Indexes several named sources separately and keeps match provenance.
+
+    Use this rather than concatenating a corpus when the sources differ in
+    kind — a train split versus a test split, scraped web text versus
+    curated prose. Two reasons it matters:
+
+    - **Provenance.** You learn *which* source an example leaked from, which
+      is what decides the remedy.
+    - **Calibration.** Innocent overlap is not stationary across sources.
+      Formulaic or boilerplate-heavy text throws near-duplicate n-grams for
+      reasons unrelated to leakage; prose does not. One global threshold
+      over-flags the former and under-flags the latter. See
+      `contamination_detector.calibration` for per-source thresholds.
+    """
+
+    def __init__(self, sources: dict[str, Iterable[str]], n: int = 13):
+        if n <= 0:
+            raise ValueError("n must be positive")
+        self.n = n
+        self.indexes: dict[str, CorpusIndex] = {
+            name: CorpusIndex(docs, n=n) for name, docs in sources.items()
+        }
+
+    @property
+    def source_names(self) -> list[str]:
+        return list(self.indexes)
+
+    def overlap_score(self, example_text: str, example_id: str = "") -> MultiSourceResult:
+        return MultiSourceResult(
+            example_id=example_id,
+            per_source={
+                name: index.overlap_score(example_text, example_id=example_id)
+                for name, index in self.indexes.items()
+            },
+        )
+
+    def batch_overlap_scores(self, examples: dict[str, str]) -> list[MultiSourceResult]:
+        return [
+            self.overlap_score(text, example_id=eid) for eid, text in examples.items()
+        ]

@@ -75,6 +75,53 @@ def auc_score(positive_scores: list[float], negative_scores: list[float]) -> flo
     return u / (n_pos * n_neg)
 
 
+def precision_at_prevalence(recall: float, fpr: float, prevalence: float) -> float:
+    """Precision you would actually see given how rare contamination really is.
+
+    False-positive rate is the wrong number to judge a detector on when you
+    sweep a corpus that is almost entirely clean. FPR divides by the clean
+    set, so it stays flattering while the flagged pile fills with noise.
+    Precision divides by everything you flagged, which is the review queue
+    somebody has to work through:
+
+        precision = p*recall / (p*recall + (1-p)*fpr)
+
+    At 1% prevalence a detector with recall 0.95 and FPR 0.46 yields
+    precision of roughly 0.02 — about fifty false flags for every real one.
+    Report this alongside FPR whenever you quote deployment numbers.
+    """
+    if not 0.0 <= prevalence <= 1.0:
+        raise ValueError("prevalence must be between 0 and 1")
+    true_positives = prevalence * recall
+    false_positives = (1.0 - prevalence) * fpr
+    denominator = true_positives + false_positives
+    if denominator <= 0:
+        return float("nan")
+    return true_positives / denominator
+
+
+def review_queue_size(
+    n_documents: int, recall: float, fpr: float, prevalence: float
+) -> dict[str, float]:
+    """Expected flag counts for a corpus sweep, as absolute numbers.
+
+    Ratios understate how bad a mediocre FPR is at scale; the raw count of
+    documents a human has to review is what makes it concrete.
+    """
+    contaminated = n_documents * prevalence
+    clean = n_documents - contaminated
+    true_positives = contaminated * recall
+    false_positives = clean * fpr
+    flagged = true_positives + false_positives
+    return {
+        "flagged": flagged,
+        "true_positives": true_positives,
+        "false_positives": false_positives,
+        "missed": contaminated - true_positives,
+        "precision": (true_positives / flagged) if flagged else float("nan"),
+    }
+
+
 @dataclass
 class ExampleReport:
     example_id: str

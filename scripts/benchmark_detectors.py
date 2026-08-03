@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from contamination_detector.evaluation import make_dataset  # noqa: E402
 from contamination_detector.ngram_overlap import CorpusIndex  # noqa: E402
-from contamination_detector.report import auc_score  # noqa: E402
+from contamination_detector.report import auc_score, review_queue_size  # noqa: E402
 
 TYPES = ["verbatim", "partial", "paraphrased"]
 NGRAM_SIZES = [5, 8, 13, 20]
@@ -115,9 +115,23 @@ def main(argv=None) -> int:
         default=10,
         help="number of random seeds to average over (default: 10)",
     )
+    parser.add_argument(
+        "--prevalence",
+        type=float,
+        default=0.01,
+        help="assumed real contamination rate for the deployment table (default: 0.01)",
+    )
+    parser.add_argument(
+        "--corpus-size",
+        type=int,
+        default=10_000,
+        help="documents in the hypothetical swept corpus (default: 10000)",
+    )
     args = parser.parse_args(argv)
     if args.seeds < 1:
         parser.error("--seeds must be at least 1")
+    if not 0.0 < args.prevalence < 1.0:
+        parser.error("--prevalence must be between 0 and 1")
 
     sample = make_dataset(seed=0)
     counts = {t: sum(1 for e in sample.examples if e.contamination_type == t) for t in TYPES}
@@ -158,18 +172,56 @@ def main(argv=None) -> int:
             )
         print()
 
-    # A setting is only usable if it almost never flags clean text; among
-    # those, prefer the one that catches the most leakage.
-    usable = [r for r in rows if r[4] <= 0.05]
-    if usable:
-        best = max(usable, key=lambda r: r[3])
-        print(f"best usable setting (FPR <= 0.05): n={best[0]} {best[1]}")
-        print(f"  recall {best[3]:.3f}, FPR {best[4]:.3f}, precision {best[5]:.3f}")
-
     best_auc = max(rows, key=lambda r: r[2])
     print(
         f"\nbest raw AUC: n={best_auc[0]} {best_auc[1]} ({best_auc[2]:.3f}) "
         f"- but FPR {best_auc[4]:.3f} at threshold"
+    )
+
+    # FPR divides by the clean set, which flatters a detector when you sweep
+    # a corpus that is almost entirely clean. Precision divides by everything
+    # flagged, which is the pile somebody actually has to read.
+    print(
+        f"\n\nDeployment view: sweeping {args.corpus_size:,} documents at "
+        f"{args.prevalence:.0%} real contamination"
+    )
+    header2 = (
+        f"{'n':>3} {'signal':<16} {'flagged':>9} {'real':>7} {'false':>9} "
+        f"{'missed':>7} {'precision':>10}"
+    )
+    print(header2)
+    print("-" * len(header2))
+    for n, signal, _auc, recall, fpr, _prec in rows:
+        q = review_queue_size(args.corpus_size, recall, fpr, args.prevalence)
+        print(
+            f"{n:>3} {signal:<16} {q['flagged']:>9,.0f} {q['true_positives']:>7,.0f} "
+            f"{q['false_positives']:>9,.0f} {q['missed']:>7,.0f} {q['precision']:>10.3f}"
+        )
+    # Rank on deployment precision, not FPR. Selecting on FPR is the same
+    # mistake this table exists to expose: n=5 longest_run looks like the
+    # best "usable" setting at FPR 0.018, but it buys a handful of extra
+    # true positives with hundreds of false ones.
+    deployment = [
+        (n, signal, review_queue_size(args.corpus_size, recall, fpr, args.prevalence))
+        for n, signal, _auc, recall, fpr, _prec in rows
+    ]
+    ranked = sorted(
+        deployment,
+        key=lambda row: (row[2]["precision"], row[2]["true_positives"]),
+        reverse=True,
+    )
+    top_n, top_signal, top_q = ranked[0]
+    print(
+        f"\nbest at this prevalence: n={top_n} {top_signal} "
+        f"- precision {top_q['precision']:.3f}, "
+        f"{top_q['true_positives']:,.0f} real leaks found, "
+        f"{top_q['false_positives']:,.0f} false flags"
+    )
+    print(
+        "\nA respectable-looking FPR becomes an unreadable review queue once the\n"
+        "base rate is realistic. Judge a setting on precision here, not on FPR:\n"
+        "selecting on FPR alone would pick a setting that finds a few more real\n"
+        "leaks by burying them in hundreds of false ones."
     )
     return 0
 

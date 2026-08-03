@@ -6,6 +6,8 @@ from contamination_detector.report import (
     MethodDirection,
     auc_score,
     build_report,
+    precision_at_prevalence,
+    review_queue_size,
     zscores,
 )
 
@@ -149,3 +151,48 @@ def test_report_rejects_misaligned_labels():
         build_report(
             example_ids=["a", "b"], method_scores={"ngram": [0.1, 0.2]}, labels=[1]
         )
+
+
+def test_precision_collapses_at_low_prevalence():
+    """The comment that prompted this: FPR is the wrong denominator.
+
+    recall 0.945 / FPR 0.457 looks survivable until you sweep a corpus that
+    is 99% clean, at which point almost every flag is noise.
+    """
+    good_looking_fpr = precision_at_prevalence(recall=0.945, fpr=0.457, prevalence=0.01)
+    assert good_looking_fpr < 0.03
+
+
+def test_precision_is_high_when_fpr_is_near_zero():
+    assert precision_at_prevalence(recall=0.40, fpr=0.0, prevalence=0.01) == 1.0
+
+
+def test_precision_rises_with_prevalence():
+    low = precision_at_prevalence(recall=0.9, fpr=0.1, prevalence=0.01)
+    high = precision_at_prevalence(recall=0.9, fpr=0.1, prevalence=0.5)
+    assert high > low
+
+
+def test_precision_rejects_impossible_prevalence():
+    with pytest.raises(ValueError):
+        precision_at_prevalence(recall=0.9, fpr=0.1, prevalence=1.5)
+
+
+def test_precision_is_nan_when_nothing_is_flagged():
+    assert math.isnan(precision_at_prevalence(recall=0.0, fpr=0.0, prevalence=0.01))
+
+
+def test_review_queue_makes_the_cost_concrete():
+    queue = review_queue_size(n_documents=10_000, recall=0.945, fpr=0.457, prevalence=0.01)
+    assert queue["true_positives"] == pytest.approx(94.5)
+    assert queue["false_positives"] == pytest.approx(4524.3)
+    assert queue["precision"] < 0.03
+    # Recall is high, so few real leaks are missed - the problem is the pile.
+    assert queue["missed"] < 6
+
+
+def test_review_queue_shrinks_with_a_precise_detector():
+    sloppy = review_queue_size(10_000, recall=0.945, fpr=0.457, prevalence=0.01)
+    precise = review_queue_size(10_000, recall=0.400, fpr=0.018, prevalence=0.01)
+    assert precise["flagged"] < sloppy["flagged"] / 10
+    assert precise["precision"] > sloppy["precision"]
