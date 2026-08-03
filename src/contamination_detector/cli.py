@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -49,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
         default=0.5,
         help="absolute overlap fraction that flags an example regardless of z-score",
     )
+    parser.add_argument(
+        "--min-run",
+        type=int,
+        default=30,
+        help="contiguous verbatim token run that flags an example on its own",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     args = parser.parse_args(argv)
 
@@ -65,11 +72,17 @@ def main(argv: list[str] | None = None) -> int:
         flag_threshold=args.threshold,
     )
 
-    # z-scores are relative, so they under-flag when a large share of the
-    # benchmark is contaminated (the contaminated examples become the norm).
-    # An absolute overlap floor catches that case.
+    by_id = {r.example_id: r for r in results}
     for entry in report.examples:
-        if entry.method_scores["ngram_overlap"] >= args.min_overlap:
+        result = by_id[entry.example_id]
+        # z-scores are relative, so they under-flag when a large share of the
+        # benchmark is contaminated (the contaminated examples become the norm).
+        # An absolute overlap floor catches that case.
+        if result.scorable and result.overlap_fraction >= args.min_overlap:
+            entry.flagged = True
+        # A long verbatim run is strong evidence on its own, even when the
+        # fraction is low because the example is much longer than the leak.
+        if result.longest_match_tokens >= args.min_run:
             entry.flagged = True
 
     if args.json:
@@ -78,8 +91,10 @@ def main(argv: list[str] | None = None) -> int:
                 [
                     {
                         "id": e.example_id,
-                        "overlap_fraction": e.method_scores["ngram_overlap"],
+                        "overlap_fraction": by_id[e.example_id].overlap_fraction,
+                        "longest_match_tokens": by_id[e.example_id].longest_match_tokens,
                         "zscore": e.combined_zscore,
+                        "scorable": by_id[e.example_id].scorable,
                         "flagged": e.flagged,
                     }
                     for e in report.examples
@@ -88,13 +103,36 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        print(f"{'example':<20} {'overlap':>9} {'z':>7}  flag")
-        print("-" * 45)
-        for e in sorted(report.examples, key=lambda x: x.combined_zscore, reverse=True):
+        print(f"{'example':<20} {'overlap':>9} {'run':>5} {'z':>7}  flag")
+        print("-" * 52)
+        ordered = sorted(
+            report.examples,
+            key=lambda x: (
+                -1e9 if math.isnan(x.combined_zscore) else x.combined_zscore
+            ),
+            reverse=True,
+        )
+        for e in ordered:
+            result = by_id[e.example_id]
+            if not result.scorable:
+                print(
+                    f"{e.example_id:<20} {'--':>9} {'--':>5} {'--':>7}  "
+                    f"too short for n={args.ngram_size}"
+                )
+                continue
             flag = "CONTAMINATED" if e.flagged else ""
             print(
-                f"{e.example_id:<20} {e.method_scores['ngram_overlap']:>9.3f} "
-                f"{e.combined_zscore:>7.2f}  {flag}"
+                f"{e.example_id:<20} {result.overlap_fraction:>9.3f} "
+                f"{result.longest_match_tokens:>5d} {e.combined_zscore:>7.2f}  {flag}"
+            )
+
+        unscorable = [r for r in results if not r.scorable]
+        if unscorable:
+            print(
+                f"\nNote: {len(unscorable)} example(s) were shorter than the n-gram "
+                f"size and could not be scored. That is not evidence they are clean; "
+                f"lower --ngram-size to include them.",
+                file=sys.stderr,
             )
 
     return 0
