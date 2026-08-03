@@ -57,11 +57,24 @@ with st.sidebar:
         step=0.05,
         help="An example is flagged when at least this fraction of its n-grams appear in the corpus.",
     )
+    min_run = st.slider(
+        "Flag threshold (contiguous run)",
+        min_value=0,
+        max_value=100,
+        value=30,
+        step=5,
+        help="Flag an example that shares this many consecutive words with the corpus, "
+        "however small its overall overlap fraction.",
+    )
     st.markdown("---")
     st.markdown(
         "**How it works:** every example is split into overlapping n-grams "
-        "and checked against the corpus's n-gram set. An example whose "
-        "n-grams nearly all appear in the corpus is almost certainly leaked."
+        "and checked against the corpus. Two signals come out of that — the "
+        "**overlap fraction** (how much of the example appears anywhere in "
+        "the corpus) and the **longest contiguous run** of words found "
+        "verbatim. The run is the more telling of the two: a long verbatim "
+        "stretch is hard to explain innocently, whereas scattered matches "
+        "are often just shared phrasing."
     )
     st.markdown("[Source on GitHub](https://github.com/K611-dot/contamination-detector)")
 
@@ -99,38 +112,59 @@ if st.button("Run contamination check", type="primary"):
             method_scores={"ngram_overlap": [r.overlap_fraction for r in results]},
         )
         for entry, result in zip(report.examples, results):
-            entry.flagged = result.overlap_fraction >= min_overlap
+            entry.flagged = bool(
+                (result.scorable and result.overlap_fraction >= min_overlap)
+                or result.longest_match_tokens >= min_run
+            )
 
+        scorable = [r for r in results if r.scorable]
+        unscorable = [r for r in results if not r.scorable]
         flagged_count = sum(1 for e in report.examples if e.flagged)
-        contamination_rate = flagged_count / len(examples)
 
         st.markdown("---")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Examples checked", len(examples))
+        m1.metric("Examples checked", len(scorable))
         m2.metric("Flagged as contaminated", flagged_count)
-        m3.metric("Contamination rate", f"{contamination_rate:.0%}")
+        rate = flagged_count / len(scorable) if scorable else 0.0
+        m3.metric("Contamination rate", f"{rate:.0%}")
 
         if flagged_count:
             st.error(
-                f"{flagged_count} of {len(examples)} examples appear in the corpus. "
-                "Scores on this benchmark are likely inflated."
+                f"{flagged_count} of {len(scorable)} scorable examples appear in the "
+                "corpus. Scores on this benchmark are likely inflated."
             )
         else:
-            st.success("No examples exceeded the overlap threshold.")
+            st.success("No examples exceeded the thresholds.")
+
+        if unscorable:
+            st.warning(
+                f"{len(unscorable)} example(s) are shorter than the n-gram size "
+                f"({ngram_size} words) and could not be scored. That is not evidence "
+                "they are clean — lower the n-gram size to include them."
+            )
 
         st.subheader("Per-example results")
         for entry, result, text in zip(report.examples, results, examples):
-            status = "🚩 CONTAMINATED" if entry.flagged else "✅ clean"
+            if not result.scorable:
+                status = "⚪ not scorable"
+            elif entry.flagged:
+                status = "🚩 CONTAMINATED"
+            else:
+                status = "✅ clean"
             preview = text if len(text) <= 90 else text[:90] + "…"
             with st.expander(f"{status} — {preview}", expanded=entry.flagged):
-                st.progress(result.overlap_fraction)
-                st.write(
-                    f"**Overlap:** {result.overlap_fraction:.1%} "
-                    f"({result.matched_ngrams} of {result.total_ngrams} n-grams found in corpus)"
-                )
-                if result.total_ngrams == 0:
+                if not result.scorable:
                     st.info(
-                        f"This example is shorter than the n-gram size ({ngram_size} words), "
-                        "so it can't be scored. Lower the n-gram size to check it."
+                        f"Too short to score at n={ngram_size}: an example needs at "
+                        f"least {ngram_size} words. Lower the n-gram size to check it."
+                    )
+                else:
+                    st.progress(result.overlap_fraction)
+                    c1, c2 = st.columns(2)
+                    c1.metric("Overlap fraction", f"{result.overlap_fraction:.1%}")
+                    c2.metric("Longest verbatim run", f"{result.longest_match_tokens} words")
+                    st.caption(
+                        f"{result.matched_ngrams} of {result.total_ngrams} distinct "
+                        f"{ngram_size}-grams were found in the corpus."
                     )
                 st.text(text)
