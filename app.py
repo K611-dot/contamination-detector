@@ -30,6 +30,13 @@ Coral reefs are underwater ecosystems built by colonies of tiny animals called p
 
 Neural networks are a family of machine learning models loosely inspired by biological neurons. They are trained by gradient descent on a loss function."""
 
+# This is a public, shared, single-process demo on free hosting. Indexing costs
+# roughly 20 MB of RAM per 1 MB of pasted text, so an unbounded paste would
+# exhaust the container and take the app down for everyone. These caps keep the
+# worst case well inside the free tier; the CLI has no such limit.
+MAX_CORPUS_CHARS = 2_000_000
+MAX_BENCHMARK_CHARS = 200_000
+
 st.set_page_config(page_title="Benchmark Contamination Detector", page_icon="🔍", layout="wide")
 
 st.title("🔍 Benchmark Contamination Detector")
@@ -76,6 +83,14 @@ with st.sidebar:
         "stretch is hard to explain innocently, whereas scattered matches "
         "are often just shared phrasing."
     )
+    st.markdown("---")
+    st.caption(
+        "**Your data:** text you paste is processed in memory to compute the "
+        "scores and is never stored, logged, or sent anywhere else — this page "
+        "makes no outbound calls. It is still a third-party host, though, so "
+        "for unpublished benchmarks prefer the CLI, which runs entirely on "
+        "your own machine."
+    )
     st.markdown("[Source on GitHub](https://github.com/K611-dot/contamination-detector)")
 
 col_left, col_right = st.columns(2)
@@ -84,14 +99,22 @@ with col_left:
     st.subheader("Benchmark examples")
     st.caption("One example per line.")
     benchmark_text = st.text_area(
-        "Benchmark examples", value=DEFAULT_BENCHMARK, height=280, label_visibility="collapsed"
+        "Benchmark examples",
+        value=DEFAULT_BENCHMARK,
+        height=280,
+        max_chars=MAX_BENCHMARK_CHARS,
+        label_visibility="collapsed",
     )
 
 with col_right:
     st.subheader("Training corpus")
     st.caption("Paste the text you suspect the examples may have leaked into.")
     corpus_text = st.text_area(
-        "Training corpus", value=DEFAULT_CORPUS, height=280, label_visibility="collapsed"
+        "Training corpus",
+        value=DEFAULT_CORPUS,
+        height=280,
+        max_chars=MAX_CORPUS_CHARS,
+        label_visibility="collapsed",
     )
 
 if st.button("Run contamination check", type="primary"):
@@ -101,6 +124,14 @@ if st.button("Run contamination check", type="primary"):
         st.warning("Add at least one benchmark example.")
     elif not corpus_text.strip():
         st.warning("Add some corpus text to check against.")
+    elif len(corpus_text) > MAX_CORPUS_CHARS or len(benchmark_text) > MAX_BENCHMARK_CHARS:
+        # text_area's max_chars is enforced in the browser only, so re-check here.
+        st.error(
+            f"Input too large for the hosted demo (corpus limit "
+            f"{MAX_CORPUS_CHARS:,} characters, benchmark limit "
+            f"{MAX_BENCHMARK_CHARS:,}). Install the package and use the "
+            "`contam-detect` CLI locally for full-size corpora — it has no limit."
+        )
     else:
         index = CorpusIndex([corpus_text], n=ngram_size)
         results = [
