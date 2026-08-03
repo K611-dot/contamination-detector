@@ -100,7 +100,7 @@ class _TextGenerator:
             1.0 / (i + 1) ** 0.9 for i in range(len(self.collocations))
         ]
 
-    def _word(self) -> str:
+    def random_word(self) -> str:
         return self.rng.choices(self.vocab, weights=self.weights, k=1)[0]
 
     def sentence(self, length: int) -> str:
@@ -113,7 +113,7 @@ class _TextGenerator:
                     )[0]
                 )
             else:
-                words.append(self._word())
+                words.append(self.random_word())
         return " ".join(words[:length])
 
 
@@ -164,10 +164,7 @@ def make_dataset(
         text = gen.sentence(example_length)
         words = text.split()
         mutated = [
-            gen.rng.choices(gen.vocab, weights=gen.weights, k=1)[0]
-            if rng.random() < paraphrase_rate
-            else w
-            for w in words
+            gen.random_word() if rng.random() < paraphrase_rate else w for w in words
         ]
         leaked_fragments.append(" ".join(mutated))
         examples.append(LabelledExample(f"paraphrased_{i}", text, True, "paraphrased"))
