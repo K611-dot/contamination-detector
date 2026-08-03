@@ -1,0 +1,20 @@
+Australia is a country and continent in the southern hemisphere. Its
+largest cities include Sydney, Melbourne, Brisbane and Perth. The
+country is known for its distinctive wildlife, including kangaroos,
+koalas and the platypus, and for a vast arid interior often referred to
+as the outback.
+
+Coral reefs are underwater ecosystems built by colonies of tiny animals
+called polyps. They support enormous biodiversity but are vulnerable to
+rising sea temperatures, which can trigger bleaching events where the
+symbiotic algae living in coral tissue are expelled.
+
+Cells are the basic structural unit of living organisms. Different
+organelles inside a cell carry out specialised functions, from protein
+synthesis to waste breakdown, coordinated by signals originating in the
+nucleus.
+
+Neural networks are a family of machine learning models loosely inspired
+by biological neurons. They are trained by gradient descent on a loss
+function, adjusting weights so predictions move closer to observed
+targets over many passes through a training dataset.
